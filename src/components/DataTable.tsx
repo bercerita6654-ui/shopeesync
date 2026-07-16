@@ -98,6 +98,7 @@ export default function DataTable({
 }: DataTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [hideTemplateRows, setHideTemplateRows] = useState(true);
   const rowsPerPage = 50; // Use a comfortable row count per page
 
   // Determine which data and headers to show
@@ -113,18 +114,36 @@ export default function DataTable({
     return updatedHeaders;
   }, [activeTab, originalHeaders, excelHeaders, updatedHeaders]);
 
-  // Handle Search Filtering
+  // Map row positions so we can uniquely display their original spreadsheet index
+  const datasetWithIndices = useMemo(() => {
+    return currentDataset.map((row, idx) => ({
+      ...row,
+      _originalIndex: idx + 1
+    }));
+  }, [currentDataset]);
+
+  // Handle Search Filtering & Template Row Hiding
   const filteredData = useMemo(() => {
-    if (!searchTerm.trim()) return currentDataset;
+    let data = datasetWithIndices;
+
+    if (hideTemplateRows) {
+      data = data.filter((row) => {
+        const rowNum = row._originalIndex;
+        return rowNum !== 1 && rowNum !== 3 && rowNum !== 4 && rowNum !== 5;
+      });
+    }
+
+    if (!searchTerm.trim()) return data;
     const lowerSearch = searchTerm.toLowerCase();
     
-    return currentDataset.filter((row) => {
-      return Object.values(row).some((val) => {
+    return data.filter((row) => {
+      return Object.entries(row).some(([key, val]) => {
+        if (key === '_originalIndex') return false;
         if (val === null || val === undefined) return false;
         return String(val).toLowerCase().includes(lowerSearch);
       });
     });
-  }, [currentDataset, searchTerm]);
+  }, [datasetWithIndices, searchTerm, hideTemplateRows]);
 
   // Reset page when changing tabs or search terms
   React.useEffect(() => {
@@ -281,18 +300,32 @@ export default function DataTable({
           )}
         </div>
 
-        {/* Search Bar */}
-        <div className="relative max-w-xs w-full">
-          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-slate-400">
-            <Search className="w-4 h-4" />
+        {/* Controls: Hide Template and Search Bar */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+          {/* Hide Shopee Template Rows Toggle */}
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 px-3.5 py-1.5 rounded-xl cursor-pointer select-none transition-all">
+            <input
+              type="checkbox"
+              checked={hideTemplateRows}
+              onChange={(e) => setHideTemplateRows(e.target.checked)}
+              className="rounded border-slate-300 text-shopee focus:ring-shopee/20 focus:ring-2 accent-shopee w-4.5 h-4.5"
+            />
+            <span>Sembunyikan Baris Template (1, 3, 4, 5)</span>
+          </label>
+
+          {/* Search Bar */}
+          <div className="relative max-w-xs w-full">
+            <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-slate-400">
+              <Search className="w-4 h-4" />
+            </div>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Cari kata kunci..."
+              className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-shopee/20 focus:border-shopee transition-all"
+            />
           </div>
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Cari kata kunci..."
-            className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-shopee/20 focus:border-shopee transition-all"
-          />
         </div>
       </div>
 
@@ -383,7 +416,7 @@ export default function DataTable({
                   <tr key={index} className={trClass}>
                     {/* Index Counter Cell */}
                     <td className={numCellClass}>
-                      <span>{startIndex + index + 1}</span>
+                      <span>{row._originalIndex !== undefined ? row._originalIndex : startIndex + index + 1}</span>
                     </td>
 
                     {/* Data Cells */}
