@@ -1004,8 +1004,10 @@ export default function App() {
 
               // Apply the new quantity if matched
               if (matchedQty !== null) {
+                // Adjust negative quantities to 0 to prevent Shopee upload failures
+                const finalMatchedQty = matchedQty < 0 ? 0 : matchedQty;
                 const currentStockStr = String(row[stockCol] || '').trim();
-                const newStockStr = String(matchedQty);
+                const newStockStr = String(finalMatchedQty);
 
                 if (currentStockStr !== newStockStr) {
                   row[stockCol] = newStockStr;
