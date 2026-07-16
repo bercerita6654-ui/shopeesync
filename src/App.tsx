@@ -22,8 +22,34 @@ import AlertModal, { AlertConfig } from './components/AlertModal';
 import DashboardSummary from './components/DashboardSummary';
 
 const DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/1xYSjq2Ez_cJn3NcoBPTW873Fpzmo8IpqLyZxBDDKOm4/export?format=csv&gid=1378584398";
-const DEFAULT_CSV_URL_GOMALL = "https://docs.google.com/spreadsheets/d/1xYSjq2Ez_cJn3NcoBPTW873Fpzmo8IpqLyZxBDDKOm4/export?format=csv&gid=1904720934";
+const DEFAULT_CSV_URL_GOMALL = "https://docs.google.com/spreadsheets/d/1xYSjq2Ez_cJn3NcoBPTW873Fpzmo8IpqLyZxBDDKOm4/export?format=csv&gid=1555986622";
 const DEFAULT_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxRlarbUs_XTv012lT8e5T4Psa3ull6LOz3VBeYkl9-ZFBP_ptMUER_b7vh8LzLc6c/exec";
+
+// Convert Google Sheets edit URL or share URL to export CSV URL automatically
+const convertToCsvUrl = (url: string): string => {
+  if (!url) return '';
+  const cleanUrl = url.trim();
+  
+  // Already in export or direct CSV format
+  if (cleanUrl.includes('/export?') || cleanUrl.includes('output=csv')) {
+    return cleanUrl;
+  }
+  
+  // Parse edit URL to extract ID and GID
+  if (cleanUrl.includes('/spreadsheets/d/')) {
+    const spreadsheetIdMatch = cleanUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (spreadsheetIdMatch) {
+      const spreadsheetId = spreadsheetIdMatch[1];
+      let gid = '0';
+      const gidMatch = cleanUrl.match(/[?&#]gid=([0-9]+)/);
+      if (gidMatch) {
+        gid = gidMatch[1];
+      }
+      return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
+    }
+  }
+  return cleanUrl;
+};
 
 // Helper to format SKU columns with 5-digit padding of leading zeros if numeric
 const formatSkuValue = (val: any): string => {
@@ -75,12 +101,16 @@ export default function App() {
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
 
   const extractSpreadsheetId = (url: string): string | null => {
+    if (url.includes('/spreadsheets/d/e/')) {
+      const match = url.match(/\/spreadsheets\/d\/e\/([a-zA-Z0-9-_]+)/);
+      return match ? match[1] : null;
+    }
     const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
     return match ? match[1] : null;
   };
 
   const extractGid = (url: string): string | null => {
-    const match = url.match(/[?&]gid=([0-9]+)/);
+    const match = url.match(/[?&#]gid=([0-9]+)/);
     return match ? match[1] : null;
   };
 
@@ -235,7 +265,9 @@ export default function App() {
     setOriginalData([]);
     setOriginalHeaders([]);
     
-    Papa.parse(urlToFetch, {
+    const parsedUrl = convertToCsvUrl(urlToFetch);
+    
+    Papa.parse(parsedUrl, {
       download: true,
       header: true,
       skipEmptyLines: true,
@@ -838,6 +870,12 @@ export default function App() {
 
         if (!spreadsheetId) {
           throw new Error('Format URL Google Sheets tidak valid. Silakan periksa kolom URL di Pengaturan.');
+        }
+
+        if (spreadsheetId.startsWith('2PACX-')) {
+          throw new Error(
+            'Anda menggunakan tautan Google Sheets yang "Dipublikasikan ke Web" (Published to Web).\n\nTautan publikasi ini bersifat BACA SAJA (Read-Only) untuk umum dan tidak dapat ditulis menggunakan Google Sheets API resmi secara langsung.\n\nUntuk melakukan Sinkronisasi API Langsung, harap ganti tautan di Pengaturan dengan Tautan EDIT Google Sheets asli Anda (misalnya: https://docs.google.com/spreadsheets/d/[ID_SPREADSHEET]/edit).'
+          );
         }
 
         setUpdateStatusText('Mengambil nama sheet/tab...');
