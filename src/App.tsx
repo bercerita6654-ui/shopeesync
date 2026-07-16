@@ -69,6 +69,87 @@ const formatSkuValue = (val: any): string => {
   return strVal;
 };
 
+// Helper to clean duplicate variations/models to prevent "duplicate model_setting" errors in Shopee
+const deduplicateShopeeRows = (rows: DataRow[], headers: string[]): { cleanRows: DataRow[], duplicateCount: number } => {
+  const seenKeys = new Set<string>();
+  const cleanRows: DataRow[] = [];
+  let duplicateCount = 0;
+
+  // Identify column headers dynamically (case-insensitive)
+  const varIdCol = headers.find(h => 
+    h.toLowerCase() === 'et_title_variation_id' || 
+    h.toLowerCase() === 'kode variasi' ||
+    h.toLowerCase().includes('variation_id') ||
+    h.toLowerCase().includes('kode_variasi') ||
+    h.toLowerCase() === 'variation id'
+  ) || 'et_title_variation_id';
+
+  const prodIdCol = headers.find(h => 
+    h.toLowerCase() === 'et_title_product_id' || 
+    h.toLowerCase() === 'kode produk' ||
+    h.toLowerCase().includes('product_id') ||
+    h.toLowerCase().includes('kode_produk') ||
+    h.toLowerCase() === 'product id'
+  ) || 'et_title_product_id';
+
+  const varNameCol = headers.find(h => 
+    h.toLowerCase() === 'et_title_variation_name' || 
+    h.toLowerCase() === 'nama variasi' ||
+    h.toLowerCase().includes('variation_name') ||
+    h.toLowerCase().includes('nama_variasi') ||
+    h.toLowerCase() === 'variation name'
+  ) || 'et_title_variation_name';
+
+  rows.forEach((row) => {
+    const varId = String(row[varIdCol] || '').trim();
+    const prodId = String(row[prodIdCol] || '').trim();
+    const varName = String(row[varNameCol] || '').trim();
+
+    let uniqueKey = '';
+
+    if (varId && varId !== '0' && varId !== '0.0') {
+      uniqueKey = `var_${varId}`;
+    } else if (prodId && varName) {
+      uniqueKey = `prod_${prodId}_var_${varName.toLowerCase()}`;
+    } else if (prodId) {
+      uniqueKey = `prod_${prodId}`;
+    } else {
+      uniqueKey = `rand_${Math.random()}`;
+    }
+
+    if (seenKeys.has(uniqueKey)) {
+      duplicateCount++;
+      // If we see a duplicate key, prefer keeping the row that has updates or is new
+      const existingIdx = cleanRows.findIndex(r => {
+        const rVarId = String(r[varIdCol] || '').trim();
+        const rProdId = String(r[prodIdCol] || '').trim();
+        const rVarName = String(r[varNameCol] || '').trim();
+        let rKey = '';
+        if (rVarId && rVarId !== '0' && rVarId !== '0.0') {
+          rKey = `var_${rVarId}`;
+        } else if (rProdId && rVarName) {
+          rKey = `prod_${rProdId}_var_${rVarName.toLowerCase()}`;
+        } else if (rProdId) {
+          rKey = `prod_${rProdId}`;
+        }
+        return rKey === uniqueKey;
+      });
+
+      if (existingIdx !== -1) {
+        // If the new row is updated or is marked as new, replace the existing one
+        if ((row._isUpdated || row._isNew) && !cleanRows[existingIdx]._isUpdated && !cleanRows[existingIdx]._isNew) {
+          cleanRows[existingIdx] = row;
+        }
+      }
+    } else {
+      seenKeys.add(uniqueKey);
+      cleanRows.push(row);
+    }
+  });
+
+  return { cleanRows, duplicateCount };
+};
+
 export default function App() {
   // Firebase Auth State
   const [user, setUser] = useState<User | null>(null);
@@ -296,11 +377,15 @@ export default function App() {
           return newRow;
         });
         
-        setOriginalData(formattedRows);
+        const { cleanRows, duplicateCount } = deduplicateShopeeRows(formattedRows, headers);
+        setOriginalData(cleanRows);
         setOriginalHeaders(headers);
         setUpdatedHeaders(headers); // Set default update headers to match original
         setSheetStatus('success');
         setSheetErrorMsg('');
+        if (duplicateCount > 0) {
+          console.warn(`Ditemukan ${duplicateCount} data variasi ganda di Google Sheets. Otomatis dibersihkan untuk mencegah error di Shopee.`);
+        }
       },
       error: (err) => {
         console.error('Failed to fetch spreadsheet data:', err);
@@ -838,8 +923,11 @@ export default function App() {
           }
         });
 
+        // Run deduplication to prevent duplicate model_id setting issues in Shopee
+        const { cleanRows, duplicateCount: mergeDuplicateCount } = deduplicateShopeeRows(updatedRows, originalHeaders);
+
         // Set state values
-        setUpdatedData(updatedRows);
+        setUpdatedData(cleanRows);
         setMergeStats({
           primaryKey: resolvedPrimaryKey,
           matchingCols: matchingColumns,
@@ -850,8 +938,13 @@ export default function App() {
         setIsProcessingFile(false);
         setActiveTab('updated');
         
+        let dupMessage = '';
+        if (mergeDuplicateCount > 0) {
+          dupMessage = `\n\n⚠️ Terdeteksi ${mergeDuplicateCount} variasi ganda (duplicate model_id) yang otomatis dihapus/dibersihkan demi mencegah error saat upload ke Shopee.`;
+        }
+        
         showAlert(
-          `Pratinjau Sinkronisasi Berhasil!\n\nIdentifikator Kunci: "${resolvedPrimaryKey}"\nKolom Terbaca: ${matchingColumns.length} Kolom\nData Diperbarui: ${rowsUpdatedCount} Baris\nData Baru Ditambahkan: ${rowsAddedCount} Baris\n\nSilakan periksa lembar pratinjau "Data Diperbarui". Klik tombol "Update Data ke Sheets" untuk menyimpan secara permanen.`,
+          `Pratinjau Sinkronisasi Berhasil!\n\nIdentifikator Kunci: "${resolvedPrimaryKey}"\nKolom Terbaca: ${matchingColumns.length} Kolom\nData Diperbarui: ${rowsUpdatedCount} Baris\nData Baru Ditambahkan: ${rowsAddedCount} Baris${dupMessage}\n\nSilakan periksa lembar pratinjau "Data Diperbarui". Klik tombol "Update Data ke Sheets" untuk menyimpan secara permanen.`,
           'info',
           'Analisis File Selesai'
         );
@@ -1026,9 +1119,12 @@ export default function App() {
               return newRow;
             });
 
+            // Run deduplication to prevent duplicate model_id setting issues in Shopee
+            const { cleanRows, duplicateCount: syncDuplicateCount } = deduplicateShopeeRows(updatedRows, originalHeaders);
+
             setExcelData(mockExcelData);
             setExcelHeaders(Object.keys(results.data[0] || {}));
-            setUpdatedData(updatedRows);
+            setUpdatedData(cleanRows);
             setUpdatedHeaders(originalHeaders);
             
             setMergeStats({
@@ -1041,8 +1137,13 @@ export default function App() {
             setIsSyncingStock(false);
             setActiveTab('updated');
 
+            let dupMessage = '';
+            if (syncDuplicateCount > 0) {
+              dupMessage = `\n\n⚠️ Terdeteksi ${syncDuplicateCount} variasi ganda (duplicate model_id) yang otomatis dihapus/dibersihkan demi mencegah error saat upload ke Shopee.`;
+            }
+
             showAlert(
-              `Sinkronisasi Stok Pintar Selesai!\n\nBerhasil membaca ${results.data.length} item dari STOCK LIST.\nJumlah Baris Ter-update: ${rowsUpdatedCount} Produk.\n\nHarap periksa lembar pratinjau "Data Diperbarui". Klik tombol "Update Data ke Sheets" untuk menyimpan perubahan ke Google Sheets Toko Anda secara permanen.`,
+              `Sinkronisasi Stok Pintar Selesai!\n\nBerhasil membaca ${results.data.length} item dari STOCK LIST.\nJumlah Baris Ter-update: ${rowsUpdatedCount} Produk.${dupMessage}\n\nHarap periksa lembar pratinjau "Data Diperbarui". Klik tombol "Update Data ke Sheets" untuk menyimpan perubahan ke Google Sheets Toko Anda secara permanen.`,
               'success',
               'Penyelarasan Sukses'
             );
