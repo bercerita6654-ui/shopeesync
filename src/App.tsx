@@ -1746,7 +1746,7 @@ export default function App() {
 
       <div className="flex flex-1 flex-col lg:flex-row min-h-[calc(100vh-4rem)]">
         {/* Sidebar */}
-        <aside className="w-full lg:w-64 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col p-4 shrink-0 justify-between gap-6 z-20">
+        <aside className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col p-4 shrink-0 justify-start gap-6 z-20 overflow-y-auto custom-scrollbar lg:max-h-[calc(100vh-4rem)] lg:sticky lg:top-16">
           <div className="space-y-6">
             {/* Toko / Sheet Switcher */}
             <div className="space-y-1.5">
@@ -1828,26 +1828,30 @@ export default function App() {
               </button>
             </nav>
 
-            <div className="border-t border-slate-100 pt-4">
-              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-3">Status Hub</div>
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500">Google Sheets:</span>
-                  <span className={`font-semibold ${sheetStatus === 'success' ? 'text-emerald-600' : 'text-amber-500'}`}>
-                    {sheetStatus === 'success' ? 'Terhubung' : 'Memuat'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500">Excel Upload:</span>
-                  <span className={`font-semibold ${excelData.length > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
-                    {excelData.length > 0 ? `${excelData.length} baris` : 'Kosong'}
-                  </span>
-                </div>
-              </div>
+            <div className="border-t border-slate-100 pt-4 space-y-6">
+              <StatusPanel
+                sheetStatus={sheetStatus}
+                sheetErrorMsg={sheetErrorMsg}
+                rowCount={originalData.length}
+                colCount={originalHeaders.length}
+                lastUpdateTime={lastUpdateTime}
+                onFileSelect={handleFileSelect}
+                isProcessingFile={isProcessingFile}
+                isUpdatingSheet={isUpdatingSheet}
+                updateProgress={updateProgress}
+                updateStatusText={updateStatusText}
+                onSmartStockSync={handleSmartStockSync}
+                isSyncingStock={isSyncingStock}
+                stockUrl={stockUrl}
+              />
+              <SyncHistoryPanel
+                logs={syncLogs}
+                onClearLogs={handleClearLogs}
+              />
             </div>
           </div>
 
-          <div className="lg:mt-auto border-t border-slate-100 pt-4 hidden lg:block">
+          <div className="border-t border-slate-100 pt-4 mt-auto">
             <div className="bg-shopee-light/50 p-4 rounded-xl border border-shopee/10">
               <p className="text-xs text-shopee font-bold">Tips Sinkronisasi</p>
               <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
@@ -1902,51 +1906,23 @@ export default function App() {
             mergeStats={mergeStats}
           />
 
-          {/* Modular Grid Area for status and tables */}
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-            
-            {/* Status, upload and action block */}
-            <div className="lg:col-span-1 space-y-6">
-              <StatusPanel
-                sheetStatus={sheetStatus}
-                sheetErrorMsg={sheetErrorMsg}
-                rowCount={originalData.length}
-                colCount={originalHeaders.length}
-                lastUpdateTime={lastUpdateTime}
-                onFileSelect={handleFileSelect}
-                isProcessingFile={isProcessingFile}
-                isUpdatingSheet={isUpdatingSheet}
-                updateProgress={updateProgress}
-                updateStatusText={updateStatusText}
-                onSmartStockSync={handleSmartStockSync}
-                isSyncingStock={isSyncingStock}
-                stockUrl={stockUrl}
-              />
-              <SyncHistoryPanel
-                logs={syncLogs}
-                onClearLogs={handleClearLogs}
-              />
-            </div>
-
-            {/* Table pratinjau block */}
-            <div className="lg:col-span-3">
-              <DataTable
-                originalData={originalData}
-                originalHeaders={originalHeaders}
-                excelData={excelData}
-                excelHeaders={excelHeaders}
-                updatedData={updatedData}
-                updatedHeaders={updatedHeaders}
-                activeTab={activeTab}
-                setActiveTab={setActiveTab}
-                mergeStats={mergeStats}
-                onUpdateToSheets={handleUpdateToSheets}
-                isUpdatingSheet={isUpdatingSheet}
-                syncMethod={syncMethod}
-                setSyncMethod={setSyncMethod}
-              />
-            </div>
-
+          {/* Table pratinjau block - Mengambil seluruh lebar halaman */}
+          <div className="w-full">
+            <DataTable
+              originalData={originalData}
+              originalHeaders={originalHeaders}
+              excelData={excelData}
+              excelHeaders={excelHeaders}
+              updatedData={updatedData}
+              updatedHeaders={updatedHeaders}
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              mergeStats={mergeStats}
+              onUpdateToSheets={handleUpdateToSheets}
+              isUpdatingSheet={isUpdatingSheet}
+              syncMethod={syncMethod}
+              setSyncMethod={setSyncMethod}
+            />
           </div>
         </main>
       </div>
