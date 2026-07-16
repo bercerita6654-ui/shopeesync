@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A product listed on Shopee, synchronized from an Excel file.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique identifier (SKU/Variation SKU) of the product" },
+        "name": { "type": "string", "description": "Name of the product" },
+        "sku": { "type": "string", "description": "Stock Keeping Unit (SKU) code" },
+        "price": { "type": "number", "description": "Product price" },
+        "stock": { "type": "integer", "description": "Product stock quantity" },
+        "lastUpdated": { "type": "string", "description": "ISO timestamp of the last update" },
+        "syncStatus": { "type": "string", "description": "Status of sync for this product" }
+      },
+      "required": ["id"]
+    },
+    "SyncLog": {
+      "title": "SyncLog",
+      "description": "Log of a synchronization event between Excel, Firestore, and Google Sheets.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "fileName": { "type": "string" },
+        "rowsUpdated": { "type": "integer" },
+        "rowsAdded": { "type": "integer" },
+        "timestamp": { "type": "string" },
+        "status": { "type": "string" },
+        "errorMsg": { "type": "string" }
+      },
+      "required": ["id", "fileName", "timestamp", "status"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Application settings and state stored persistently.",
+      "type": "object",
+      "properties": {
+        "csvUrl": { "type": "string" },
+        "appsScriptUrl": { "type": "string" },
+        "lastUpdateTime": { "type": "string" }
+      },
+      "required": ["csvUrl", "appsScriptUrl"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of products synced to Firebase."
+    },
+    "/sync_logs/{logId}": {
+      "schema": "SyncLog",
+      "description": "Log history of sync events."
+    },
+    "/settings/{settingId}": {
+      "schema": "Setting",
+      "description": "Persistent setting records."
+    }
+  }
+}

@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper to validate basic ID pattern
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    // Products collection rules
+    match /products/{productId} {
+      allow read: if true;
+      allow create, update: if request.auth != null && isValidId(productId) && request.resource.data.id is string;
+      allow delete: if request.auth != null;
+    }
+
+    // Sync logs collection rules
+    match /sync_logs/{logId} {
+      allow read: if true;
+      allow create, update: if request.auth != null && isValidId(logId) && request.resource.data.id is string;
+      allow delete: if request.auth != null;
+    }
+
+    // Settings collection rules
+    match /settings/{settingId} {
+      allow read: if true;
+      allow create, update: if request.auth != null && isValidId(settingId);
+      allow delete: if request.auth != null;
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Update Data Shopee",
+  "description": "Aplikasi sinkronisasi data Excel dengan Google Sheets untuk pembaruan data produk Shopee secara otomatis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
