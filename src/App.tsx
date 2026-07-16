@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
-import { ArrowUpDown, RefreshCw, AlertCircle } from 'lucide-react';
+import { ArrowUpDown, RefreshCw, AlertCircle, Store, ShoppingBag } from 'lucide-react';
 
 // Firebase
 import { db, auth } from './firebase';
@@ -22,6 +22,7 @@ import AlertModal, { AlertConfig } from './components/AlertModal';
 import DashboardSummary from './components/DashboardSummary';
 
 const DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/1xYSjq2Ez_cJn3NcoBPTW873Fpzmo8IpqLyZxBDDKOm4/export?format=csv&gid=1378584398";
+const DEFAULT_CSV_URL_GOMALL = "https://docs.google.com/spreadsheets/d/1xYSjq2Ez_cJn3NcoBPTW873Fpzmo8IpqLyZxBDDKOm4/export?format=csv&gid=1904720934";
 const DEFAULT_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxRlarbUs_XTv012lT8e5T4Psa3ull6LOz3VBeYkl9-ZFBP_ptMUER_b7vh8LzLc6c/exec";
 
 // Helper to format SKU columns with 5-digit padding of leading zeros if numeric
@@ -51,16 +52,24 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
 
-  // URLs State (initialized from localStorage or defaults)
-  const [csvUrl, setCsvUrl] = useState(() => {
-    return localStorage.getItem('shopee_csv_url') || DEFAULT_CSV_URL;
-  });
-  const [appsScriptUrl, setAppsScriptUrl] = useState(() => {
-    return localStorage.getItem('shopee_app_script_url') || DEFAULT_APPS_SCRIPT_URL;
+  // Active Store Profile state
+  const [activeProfile, setActiveProfile] = useState<'shopee_balist' | 'gomall_shopee'>(() => {
+    return (localStorage.getItem('shopee_active_profile') as 'shopee_balist' | 'gomall_shopee') || 'shopee_balist';
   });
 
-  // Sync Method State
-  const [syncMethod, setSyncMethod] = useState<'firebase' | 'direct' | 'sheets_api'>('firebase');
+  // URLs State (initialized from localStorage or defaults per-profile)
+  const [csvUrl, setCsvUrl] = useState(() => {
+    const profile = localStorage.getItem('shopee_active_profile') || 'shopee_balist';
+    const defaultCsv = profile === 'shopee_balist' ? DEFAULT_CSV_URL : DEFAULT_CSV_URL_GOMALL;
+    return localStorage.getItem(`csv_url_${profile}`) || defaultCsv;
+  });
+  const [appsScriptUrl, setAppsScriptUrl] = useState(() => {
+    const profile = localStorage.getItem('shopee_active_profile') || 'shopee_balist';
+    return localStorage.getItem(`apps_script_url_${profile}`) || DEFAULT_APPS_SCRIPT_URL;
+  });
+
+  // Sync Method State (Google Sheets API officially default now)
+  const [syncMethod, setSyncMethod] = useState<'firebase' | 'direct' | 'sheets_api'>('sheets_api');
 
   // Google OAuth Access Token (cached in-memory)
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
@@ -275,25 +284,41 @@ export default function App() {
       setAuthLoading(false);
 
       if (currentUser) {
-        // Fetch initial sheet data
-        fetchSheetData();
-
         try {
-          // Load settings from Firestore
-          const settingsDoc = await getDoc(doc(db, 'settings', 'global'));
+          const profile = localStorage.getItem('shopee_active_profile') || 'shopee_balist';
+          const settingsDoc = await getDoc(doc(db, 'settings', profile));
+          
+          let targetCsv = profile === 'shopee_balist' ? DEFAULT_CSV_URL : DEFAULT_CSV_URL_GOMALL;
+          let targetScript = DEFAULT_APPS_SCRIPT_URL;
+
           if (settingsDoc.exists()) {
             const data = settingsDoc.data();
-            if (data.csvUrl) {
-              setCsvUrl(data.csvUrl);
-              fetchSheetData(data.csvUrl); // refetch with accurate firebase values
+            if (data.csvUrl) targetCsv = data.csvUrl;
+            if (data.appsScriptUrl) targetScript = data.appsScriptUrl;
+            if (data.lastUpdateTime) setLastUpdateTime(data.lastUpdateTime);
+          } else {
+            // Check legacy global or localStorage
+            const localCsv = localStorage.getItem(`csv_url_${profile}`);
+            const localScript = localStorage.getItem(`apps_script_url_${profile}`);
+            if (localCsv) {
+              targetCsv = localCsv;
+            } else if (profile === 'shopee_balist') {
+              // fallback to old global localStorage
+              const oldCsv = localStorage.getItem('shopee_csv_url');
+              if (oldCsv) targetCsv = oldCsv;
             }
-            if (data.appsScriptUrl) {
-              setAppsScriptUrl(data.appsScriptUrl);
-            }
-            if (data.lastUpdateTime) {
-              setLastUpdateTime(data.lastUpdateTime);
+            
+            if (localScript) {
+              targetScript = localScript;
+            } else if (profile === 'shopee_balist') {
+              const oldScript = localStorage.getItem('shopee_app_script_url');
+              if (oldScript) targetScript = oldScript;
             }
           }
+
+          setCsvUrl(targetCsv);
+          setAppsScriptUrl(targetScript);
+          fetchSheetData(targetCsv);
 
           // Load sync logs from Firestore
           const logsSnap = await getDocs(query(collection(db, 'sync_logs'), orderBy('timestamp', 'desc'), limit(50)));
@@ -306,6 +331,7 @@ export default function App() {
           }
         } catch (e) {
           console.warn('Gagal menyinkronkan data inisiasi dengan Firebase:', e);
+          fetchSheetData();
         }
       }
     });
@@ -403,15 +429,22 @@ export default function App() {
     }
   };
 
-  // Handle URL changes
+  // Handle URL changes per-profile
   const handleSaveSettings = async (newCsvUrl: string, newAppsScriptUrl: string) => {
-    localStorage.setItem('shopee_csv_url', newCsvUrl);
-    localStorage.setItem('shopee_app_script_url', newAppsScriptUrl);
+    localStorage.setItem(`csv_url_${activeProfile}`, newCsvUrl);
+    localStorage.setItem(`apps_script_url_${activeProfile}`, newAppsScriptUrl);
+    
+    // Also save legacy as fallback for current active profiles if they expect it
+    if (activeProfile === 'shopee_balist') {
+      localStorage.setItem('shopee_csv_url', newCsvUrl);
+      localStorage.setItem('shopee_app_script_url', newAppsScriptUrl);
+    }
+
     setCsvUrl(newCsvUrl);
     setAppsScriptUrl(newAppsScriptUrl);
 
     try {
-      await setDoc(doc(db, 'settings', 'global'), {
+      await setDoc(doc(db, 'settings', activeProfile), {
         csvUrl: newCsvUrl,
         appsScriptUrl: newAppsScriptUrl,
         lastUpdateTime: lastUpdateTime || ''
@@ -425,14 +458,21 @@ export default function App() {
   };
 
   const handleResetSettings = async () => {
-    localStorage.removeItem('shopee_csv_url');
-    localStorage.removeItem('shopee_app_script_url');
-    setCsvUrl(DEFAULT_CSV_URL);
+    const defaultCsv = activeProfile === 'shopee_balist' ? DEFAULT_CSV_URL : DEFAULT_CSV_URL_GOMALL;
+    localStorage.removeItem(`csv_url_${activeProfile}`);
+    localStorage.removeItem(`apps_script_url_${activeProfile}`);
+    
+    if (activeProfile === 'shopee_balist') {
+      localStorage.removeItem('shopee_csv_url');
+      localStorage.removeItem('shopee_app_script_url');
+    }
+
+    setCsvUrl(defaultCsv);
     setAppsScriptUrl(DEFAULT_APPS_SCRIPT_URL);
 
     try {
-      await setDoc(doc(db, 'settings', 'global'), {
-        csvUrl: DEFAULT_CSV_URL,
+      await setDoc(doc(db, 'settings', activeProfile), {
+        csvUrl: defaultCsv,
         appsScriptUrl: DEFAULT_APPS_SCRIPT_URL,
       }, { merge: true });
     } catch (e) {
@@ -440,7 +480,76 @@ export default function App() {
     }
     
     // Instantly refetch with default URL
-    fetchSheetData(DEFAULT_CSV_URL);
+    fetchSheetData(defaultCsv);
+  };
+
+  // Switch between profiles cleanly
+  const handleProfileSwitch = async (profile: 'shopee_balist' | 'gomall_shopee') => {
+    if (sheetStatus === 'loading' || isUpdatingSheet) return;
+    
+    localStorage.setItem('shopee_active_profile', profile);
+    setActiveProfile(profile);
+    
+    // Clear working Excel and merge states to ensure safety
+    setExcelData([]);
+    setExcelHeaders([]);
+    setUpdatedData([]);
+    setUpdatedHeaders([]);
+    setMergeStats(null);
+    setActiveTab('original');
+    
+    // Load config for target profile
+    let targetCsv = profile === 'shopee_balist' ? DEFAULT_CSV_URL : DEFAULT_CSV_URL_GOMALL;
+    let targetScript = DEFAULT_APPS_SCRIPT_URL;
+    
+    const localCsv = localStorage.getItem(`csv_url_${profile}`);
+    const localScript = localStorage.getItem(`apps_script_url_${profile}`);
+    
+    if (localCsv) {
+      targetCsv = localCsv;
+    } else if (profile === 'shopee_balist') {
+      const oldCsv = localStorage.getItem('shopee_csv_url');
+      if (oldCsv) targetCsv = oldCsv;
+    }
+    
+    if (localScript) {
+      targetScript = localScript;
+    } else if (profile === 'shopee_balist') {
+      const oldScript = localStorage.getItem('shopee_app_script_url');
+      if (oldScript) targetScript = oldScript;
+    }
+    
+    setCsvUrl(targetCsv);
+    setAppsScriptUrl(targetScript);
+    
+    // Refetch the sheet
+    fetchSheetData(targetCsv);
+    
+    // Check Firestore for remote updates
+    try {
+      const settingsDoc = await getDoc(doc(db, 'settings', profile));
+      if (settingsDoc.exists()) {
+        const data = settingsDoc.data();
+        let changed = false;
+        if (data.csvUrl && data.csvUrl !== targetCsv) {
+          targetCsv = data.csvUrl;
+          setCsvUrl(data.csvUrl);
+          changed = true;
+        }
+        if (data.appsScriptUrl && data.appsScriptUrl !== targetScript) {
+          targetScript = data.appsScriptUrl;
+          setAppsScriptUrl(data.appsScriptUrl);
+        }
+        if (data.lastUpdateTime) {
+          setLastUpdateTime(data.lastUpdateTime);
+        }
+        if (changed) {
+          fetchSheetData(targetCsv);
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal sinkronisasi data Firebase untuk profil:', e);
+    }
   };
 
   // Process selected file (Excel format)
@@ -800,8 +909,8 @@ export default function App() {
         localStorage.setItem('lastExcelUpdateToSheet', formattedTime);
         setLastUpdateTime(formattedTime);
 
-        // Update Firebase settings global with last updated time
-        await setDoc(doc(db, 'settings', 'global'), { lastUpdateTime: formattedTime }, { merge: true }).catch(() => {});
+        // Update Firebase settings per-profile with last updated time
+        await setDoc(doc(db, 'settings', activeProfile), { lastUpdateTime: formattedTime }, { merge: true }).catch(() => {});
 
         addSyncLog({
           rowsUpdated: mergeStats?.rowsUpdated || 0,
@@ -919,8 +1028,8 @@ export default function App() {
           localStorage.setItem('lastExcelUpdateToSheet', formattedTime);
           setLastUpdateTime(formattedTime);
 
-          // Update Firebase settings global with last updated time
-          await setDoc(doc(db, 'settings', 'global'), { lastUpdateTime: formattedTime }, { merge: true }).catch(() => {});
+          // Update Firebase settings per-profile with last updated time
+          await setDoc(doc(db, 'settings', activeProfile), { lastUpdateTime: formattedTime }, { merge: true }).catch(() => {});
 
           addSyncLog({
             rowsUpdated: mergeStats?.rowsUpdated || 0,
@@ -1012,8 +1121,8 @@ export default function App() {
           localStorage.setItem('lastExcelUpdateToSheet', formattedTime);
           setLastUpdateTime(formattedTime);
 
-          // Update Firebase settings global with last updated time
-          await setDoc(doc(db, 'settings', 'global'), { lastUpdateTime: formattedTime }, { merge: true }).catch(() => {});
+          // Update Firebase settings per-profile with last updated time
+          await setDoc(doc(db, 'settings', activeProfile), { lastUpdateTime: formattedTime }, { merge: true }).catch(() => {});
 
           addSyncLog({
             rowsUpdated: mergeStats?.rowsUpdated || 0,
@@ -1253,7 +1362,7 @@ export default function App() {
           <div className="h-6 w-px bg-slate-200"></div>
           <span className="font-semibold text-slate-800 text-base md:text-lg tracking-tight">Seller Centre</span>
           <span className="px-2 py-0.5 text-[10px] bg-slate-100 text-slate-500 font-bold uppercase rounded-md tracking-wider hidden sm:inline-block">
-            ShopeeBalist Sync v1.2.0
+            {activeProfile === 'shopee_balist' ? 'ShopeeBalist' : 'GomallShopee'} Sync v1.2.0
           </span>
         </div>
         <div className="flex items-center space-x-6">
@@ -1277,6 +1386,48 @@ export default function App() {
         {/* Sidebar */}
         <aside className="w-full lg:w-64 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col p-4 shrink-0 justify-between gap-6 z-20">
           <div className="space-y-6">
+            {/* Toko / Sheet Switcher */}
+            <div className="space-y-1.5">
+              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-3">Pilih Toko / Sheet</div>
+              <div className="grid grid-cols-2 lg:grid-cols-1 gap-2 px-2">
+                <button
+                  type="button"
+                  onClick={() => handleProfileSwitch('shopee_balist')}
+                  className={`flex items-center justify-between px-3 py-2.5 rounded-xl font-bold text-left transition-all text-xs focus:outline-none ${
+                    activeProfile === 'shopee_balist'
+                      ? 'bg-shopee text-white shadow-md shadow-shopee/15'
+                      : 'text-slate-700 hover:bg-slate-50 border border-slate-100 hover:border-slate-200/80 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center space-x-2">
+                    <Store className={`w-3.5 h-3.5 ${activeProfile === 'shopee_balist' ? 'text-white' : 'text-slate-400'}`} />
+                    <span>ShopeeBalist</span>
+                  </div>
+                  {activeProfile === 'shopee_balist' && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                  )}
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => handleProfileSwitch('gomall_shopee')}
+                  className={`flex items-center justify-between px-3 py-2.5 rounded-xl font-bold text-left transition-all text-xs focus:outline-none ${
+                    activeProfile === 'gomall_shopee'
+                      ? 'bg-shopee text-white shadow-md shadow-shopee/15'
+                      : 'text-slate-600 hover:bg-slate-50 border border-slate-100 hover:border-slate-200/80 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center space-x-2">
+                    <ShoppingBag className={`w-3.5 h-3.5 ${activeProfile === 'gomall_shopee' ? 'text-white' : 'text-slate-400'}`} />
+                    <span>GomallShopee</span>
+                  </div>
+                  {activeProfile === 'gomall_shopee' && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                  )}
+                </button>
+              </div>
+            </div>
+
             <nav className="space-y-1">
               <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-3">Pengaturan Produk</div>
               <button
@@ -1350,12 +1501,12 @@ export default function App() {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0 pb-1">
             <div>
               <div className="flex items-center text-xs text-slate-500 space-x-2">
-                <span>Produk Saya</span>
+                <span>{activeProfile === 'shopee_balist' ? 'ShopeeBalist' : 'GomallShopee'}</span>
                 <span>/</span>
                 <span className="text-slate-800 font-semibold">Update Produk</span>
               </div>
               <h1 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight mt-1">
-                Update Informasi Produk Shopee
+                Update Informasi Produk {activeProfile === 'shopee_balist' ? 'ShopeeBalist' : 'GomallShopee'}
               </h1>
             </div>
             
