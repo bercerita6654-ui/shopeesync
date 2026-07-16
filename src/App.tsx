@@ -6,7 +6,7 @@ import { ArrowUpDown, RefreshCw, AlertCircle } from 'lucide-react';
 // Firebase
 import { db, auth } from './firebase';
 import { collection, doc, setDoc, getDoc, getDocs, getDocFromServer, writeBatch, query, orderBy, limit } from 'firebase/firestore';
-import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { LogIn, LogOut, ShieldCheck, Mail, Lock, UserPlus, Key } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -273,16 +273,51 @@ export default function App() {
     } catch (err: any) {
       console.error('Auth error:', err);
       let errMsg = 'Terjadi kesalahan sistem, silakan coba lagi.';
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
+      
+      const contains = (code: string) => 
+        (err.code && String(err.code).includes(code)) || 
+        (err.message && String(err.message).includes(code));
+
+      if (contains('wrong-password') || contains('user-not-found')) {
         errMsg = 'Email atau password salah.';
-      } else if (err.code === 'auth/invalid-email') {
+      } else if (contains('invalid-email')) {
         errMsg = 'Format email tidak valid.';
-      } else if (err.code === 'auth/weak-password') {
+      } else if (contains('weak-password')) {
         errMsg = 'Password terlalu lemah (minimal 6 karakter).';
-      } else if (err.code === 'auth/email-already-in-use') {
-        errMsg = 'Email sudah terdaftar.';
-      } else if (err.code === 'auth/invalid-credential') {
-        errMsg = 'Kredensial login salah atau tidak ditemukan.';
+      } else if (contains('email-already-in-use')) {
+        errMsg = 'Email ini sudah terdaftar. Silakan gunakan menu "Masuk" jika Anda sudah memiliki akun.';
+      } else if (contains('invalid-credential')) {
+        errMsg = 'Kredensial login salah atau tidak ditemukan. Harap periksa kembali email dan password Anda.';
+      }
+      setAuthError(errMsg);
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setAuthError('');
+    setIsSubmittingAuth(true);
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+      showAlert('Berhasil masuk menggunakan akun Google!', 'success', 'Login Google Sukses');
+    } catch (err: any) {
+      console.error('Google auth error:', err);
+      let errMsg = 'Gagal masuk dengan akun Google.';
+      
+      const contains = (code: string) => 
+        (err.code && String(err.code).includes(code)) || 
+        (err.message && String(err.message).includes(code));
+
+      if (contains('popup-closed-by-user')) {
+        errMsg = 'Proses masuk dibatalkan karena jendela popup ditutup.';
+      } else if (contains('popup-blocked')) {
+        errMsg = 'Popup diblokir oleh browser. Harap izinkan popup untuk situs ini atau silakan klik tombol buka aplikasi di tab baru jika Anda berada di dalam iframe preview.';
+      } else if (contains('unauthorized-domain')) {
+        errMsg = 'Domain ini belum diizinkan untuk Autentikasi Google di Firebase Console Anda.';
+      } else if (err.message) {
+        errMsg = `Gagal login Google: ${err.message}`;
       }
       setAuthError(errMsg);
     } finally {
@@ -958,6 +993,32 @@ export default function App() {
                 )}
               </button>
             </form>
+
+            <div className="relative my-5">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-100"></div>
+              </div>
+              <div className="relative flex justify-center text-[10px] font-bold uppercase tracking-wider">
+                <span className="bg-white px-3 text-slate-400">Atau masuk dengan</span>
+              </div>
+            </div>
+
+            <button
+              onClick={handleGoogleSignIn}
+              disabled={isSubmittingAuth}
+              type="button"
+              className="w-full py-3 bg-white hover:bg-slate-50 border border-slate-200/80 text-slate-700 text-xs font-bold rounded-2xl transition-all shadow-sm flex items-center justify-center gap-2 focus:outline-none focus:ring-4 focus:ring-slate-100 disabled:opacity-50"
+            >
+              <div className="flex items-center tracking-normal font-black text-[13px]">
+                <span className="text-[#4285F4]">G</span>
+                <span className="text-[#EA4335]">o</span>
+                <span className="text-[#FBBC05]">o</span>
+                <span className="text-[#4285F4]">g</span>
+                <span className="text-[#34A853]">l</span>
+                <span className="text-[#EA4335]">e</span>
+              </div>
+              <span className="text-slate-600 font-extrabold ml-1">Masuk dengan Google</span>
+            </button>
 
             {/* Quick Demo Credentials Help */}
             {authMode === 'signin' && (
