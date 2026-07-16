@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Loader2, CheckCircle2, XCircle, UploadCloud, History, TableProperties } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, UploadCloud, History, TableProperties, Sparkles } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface StatusPanelProps {
@@ -13,6 +13,10 @@ interface StatusPanelProps {
   isUpdatingSheet: boolean;
   updateProgress: number;
   updateStatusText: string;
+  // Smart Stock Sync props
+  onSmartStockSync: () => void;
+  isSyncingStock: boolean;
+  stockUrl: string;
 }
 
 export default function StatusPanel({
@@ -26,6 +30,9 @@ export default function StatusPanel({
   isUpdatingSheet,
   updateProgress,
   updateStatusText,
+  onSmartStockSync,
+  isSyncingStock,
+  stockUrl,
 }: StatusPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragActive, setIsDragActive] = useState(false);
@@ -119,6 +126,55 @@ export default function StatusPanel({
             </div>
           </div>
         )}
+      </div>
+
+      {/* 1b. Smart Stock Sync Card */}
+      <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+        <div className="flex items-center gap-2.5 mb-3">
+          <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+            <Sparkles className="w-5 h-5 animate-pulse" />
+          </div>
+          <div>
+            <h4 className="font-bold text-slate-800 text-sm">Penyesuaian Stok Pintar</h4>
+            <p className="text-[10px] text-slate-500">Sinkronisasi stok otomatis via STOCK LIST</p>
+          </div>
+        </div>
+        
+        <div className="text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-100/80 mb-3 space-y-1.5 leading-normal">
+          <div className="flex justify-between">
+            <span className="text-slate-500">Acuan Kunci:</span>
+            <span className="font-bold text-indigo-600">SKU 5-Digit (Kol. 1)</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Kolom Qty:</span>
+            <span className="font-bold text-indigo-600">Kolom 13 (Qty)</span>
+          </div>
+          <div className="pt-1.5 border-t border-slate-200/50 flex flex-col gap-0.5">
+            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Sheet Terhubung:</span>
+            <span className="font-mono text-[10px] text-slate-500 truncate select-all bg-white px-1.5 py-0.5 rounded border border-slate-100" title={stockUrl || 'Default Sheet'}>
+              {stockUrl ? (stockUrl.includes('/spreadsheets/d/') ? `STOCK LIST (Spreadsheet ID: ...${stockUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)?.[1]?.slice(-6) || ''})` : stockUrl) : 'STOCK LIST (Default)'}
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onSmartStockSync}
+          disabled={isSyncingStock || sheetStatus !== 'success' || rowCount === 0 || isUpdatingSheet}
+          className={`w-full py-2.5 px-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-indigo-500/10 transition-all flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-50 disabled:pointer-events-none active:scale-[0.98] cursor-pointer`}
+        >
+          {isSyncingStock ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Menyelaraskan Stok...</span>
+            </>
+          ) : (
+            <>
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Mulai Sinkronisasi Stok</span>
+            </>
+          )}
+        </button>
       </div>
 
       {/* 2. Upload Box */}
