@@ -24,6 +24,7 @@ import DashboardSummary from './components/DashboardSummary';
 const DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/1xYSjq2Ez_cJn3NcoBPTW873Fpzmo8IpqLyZxBDDKOm4/export?format=csv&gid=1378584398";
 const DEFAULT_CSV_URL_GOMALL = "https://docs.google.com/spreadsheets/d/1xYSjq2Ez_cJn3NcoBPTW873Fpzmo8IpqLyZxBDDKOm4/export?format=csv&gid=1555986622";
 const DEFAULT_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxRlarbUs_XTv012lT8e5T4Psa3ull6LOz3VBeYkl9-ZFBP_ptMUER_b7vh8LzLc6c/exec";
+const DEFAULT_STOCK_URL = "https://docs.google.com/spreadsheets/d/1mrD9sQK_Sffa1X1fzlCDmaJXs1Yj2q-XTNdi2sRGPos/export?format=csv&gid=1564332470";
 
 // Convert Google Sheets edit URL or share URL to export CSV URL automatically
 const convertToCsvUrl = (url: string): string => {
@@ -92,6 +93,10 @@ export default function App() {
   const [appsScriptUrl, setAppsScriptUrl] = useState(() => {
     const profile = localStorage.getItem('shopee_active_profile') || 'shopee_balist';
     return localStorage.getItem(`apps_script_url_${profile}`) || DEFAULT_APPS_SCRIPT_URL;
+  });
+  const [stockUrl, setStockUrl] = useState(() => {
+    const profile = localStorage.getItem('shopee_active_profile') || 'shopee_balist';
+    return localStorage.getItem(`stock_url_${profile}`) || DEFAULT_STOCK_URL;
   });
 
   // Sync Method State (Google Sheets API officially default now)
@@ -177,6 +182,7 @@ export default function App() {
 
   // Action/Process States
   const [isProcessingFile, setIsProcessingFile] = useState(false);
+  const [isSyncingStock, setIsSyncingStock] = useState(false);
   const [isUpdatingSheet, setIsUpdatingSheet] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateStatusText, setUpdateStatusText] = useState('');
@@ -462,23 +468,28 @@ export default function App() {
   };
 
   // Handle URL changes per-profile
-  const handleSaveSettings = async (newCsvUrl: string, newAppsScriptUrl: string) => {
+  const handleSaveSettings = async (newCsvUrl: string, newAppsScriptUrl: string, newStockUrl?: string) => {
+    const finalStockUrl = newStockUrl || stockUrl;
     localStorage.setItem(`csv_url_${activeProfile}`, newCsvUrl);
     localStorage.setItem(`apps_script_url_${activeProfile}`, newAppsScriptUrl);
+    localStorage.setItem(`stock_url_${activeProfile}`, finalStockUrl);
     
     // Also save legacy as fallback for current active profiles if they expect it
     if (activeProfile === 'shopee_balist') {
       localStorage.setItem('shopee_csv_url', newCsvUrl);
       localStorage.setItem('shopee_app_script_url', newAppsScriptUrl);
+      localStorage.setItem('shopee_stock_url', finalStockUrl);
     }
 
     setCsvUrl(newCsvUrl);
     setAppsScriptUrl(newAppsScriptUrl);
+    setStockUrl(finalStockUrl);
 
     try {
       await setDoc(doc(db, 'settings', activeProfile), {
         csvUrl: newCsvUrl,
         appsScriptUrl: newAppsScriptUrl,
+        stockUrl: finalStockUrl,
         lastUpdateTime: lastUpdateTime || ''
       }, { merge: true });
     } catch (e) {
@@ -493,19 +504,23 @@ export default function App() {
     const defaultCsv = activeProfile === 'shopee_balist' ? DEFAULT_CSV_URL : DEFAULT_CSV_URL_GOMALL;
     localStorage.removeItem(`csv_url_${activeProfile}`);
     localStorage.removeItem(`apps_script_url_${activeProfile}`);
+    localStorage.removeItem(`stock_url_${activeProfile}`);
     
     if (activeProfile === 'shopee_balist') {
       localStorage.removeItem('shopee_csv_url');
       localStorage.removeItem('shopee_app_script_url');
+      localStorage.removeItem('shopee_stock_url');
     }
 
     setCsvUrl(defaultCsv);
     setAppsScriptUrl(DEFAULT_APPS_SCRIPT_URL);
+    setStockUrl(DEFAULT_STOCK_URL);
 
     try {
       await setDoc(doc(db, 'settings', activeProfile), {
         csvUrl: defaultCsv,
         appsScriptUrl: DEFAULT_APPS_SCRIPT_URL,
+        stockUrl: DEFAULT_STOCK_URL,
       }, { merge: true });
     } catch (e) {
       console.error('Failed to reset settings in Firebase:', e);
@@ -533,9 +548,11 @@ export default function App() {
     // Load config for target profile
     let targetCsv = profile === 'shopee_balist' ? DEFAULT_CSV_URL : DEFAULT_CSV_URL_GOMALL;
     let targetScript = DEFAULT_APPS_SCRIPT_URL;
+    let targetStock = DEFAULT_STOCK_URL;
     
     const localCsv = localStorage.getItem(`csv_url_${profile}`);
     const localScript = localStorage.getItem(`apps_script_url_${profile}`);
+    const localStock = localStorage.getItem(`stock_url_${profile}`);
     
     if (localCsv) {
       targetCsv = localCsv;
@@ -550,9 +567,17 @@ export default function App() {
       const oldScript = localStorage.getItem('shopee_app_script_url');
       if (oldScript) targetScript = oldScript;
     }
+
+    if (localStock) {
+      targetStock = localStock;
+    } else if (profile === 'shopee_balist') {
+      const oldStock = localStorage.getItem('shopee_stock_url');
+      if (oldStock) targetStock = oldStock;
+    }
     
     setCsvUrl(targetCsv);
     setAppsScriptUrl(targetScript);
+    setStockUrl(targetStock);
     
     // Refetch the sheet
     fetchSheetData(targetCsv);
@@ -571,6 +596,10 @@ export default function App() {
         if (data.appsScriptUrl && data.appsScriptUrl !== targetScript) {
           targetScript = data.appsScriptUrl;
           setAppsScriptUrl(data.appsScriptUrl);
+        }
+        if (data.stockUrl && data.stockUrl !== targetStock) {
+          targetStock = data.stockUrl;
+          setStockUrl(data.stockUrl);
         }
         if (data.lastUpdateTime) {
           setLastUpdateTime(data.lastUpdateTime);
@@ -839,6 +868,198 @@ export default function App() {
     };
 
     reader.readAsArrayBuffer(file);
+  };
+
+  const handleSmartStockSync = async () => {
+    if (originalData.length === 0) {
+      showAlert('Data Google Sheets Toko belum siap. Harap tunggu proses memuat data selesai.', 'error', 'Koneksi Sheets Belum Siap');
+      return;
+    }
+
+    setIsSyncingStock(true);
+    setUploadedFileName('STOCK LIST Sync');
+    localStorage.setItem('shopee_uploaded_file_name', 'STOCK LIST Sync');
+
+    try {
+      const targetStockCsvUrl = convertToCsvUrl(stockUrl);
+      
+      // Fetch STOCK LIST csv data
+      const response = await fetch(targetStockCsvUrl);
+      if (!response.ok) {
+        throw new Error(`Gagal mengunduh file STOCK LIST: ${response.statusText}. Pastikan URL dapat diakses oleh publik (Published to Web atau Edit link).`);
+      }
+      
+      const csvText = await response.text();
+      
+      Papa.parse(csvText, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          try {
+            if (!results.data || results.data.length === 0) {
+              throw new Error('Data file STOCK LIST kosong atau format tidak sesuai.');
+            }
+
+            // Map STOCK LIST data to stockMap
+            const stockMap = new Map<string, number>();
+            results.data.forEach((row: any) => {
+              const rawCode = row['Code'] || row['code'] || row['CODE'] || row['SKU'] || '';
+              const rawQty = row['Qty'] || row['qty'] || row['QTY'] || row['Stock'] || row['stok'] || '0';
+              
+              if (rawCode) {
+                const cleanedCode = String(rawCode).trim();
+                const paddedCode = /^\d+$/.test(cleanedCode) ? cleanedCode.padStart(5, '0') : cleanedCode;
+                const qtyNum = parseInt(String(rawQty).replace(/[,.]/g, ''), 10) || 0;
+                stockMap.set(paddedCode, qtyNum);
+              }
+            });
+
+            if (stockMap.size === 0) {
+              throw new Error('Gagal memproses kode SKU dari STOCK LIST. Pastikan kolom "Code" dan "Qty" tersedia.');
+            }
+
+            // Dynamically identify Shopee columns
+            const parentSkuCol = originalHeaders.find(
+              h => h.toLowerCase() === 'et_title_parent_sku' || 
+                   h.toLowerCase().includes('parent_sku') || 
+                   h.toLowerCase().includes('induk')
+            ) || 'et_title_parent_sku';
+
+            const variationSkuCol = originalHeaders.find(
+              h => h.toLowerCase() === 'et_title_variation_sku' || 
+                   h.toLowerCase() === 'sku' ||
+                   h.toLowerCase().includes('variation_sku') || 
+                   h.toLowerCase().includes('variasi')
+            ) || 'et_title_variation_sku';
+
+            const stockCol = originalHeaders.find(
+              h => h.toLowerCase() === 'et_title_variation_stock' || 
+                   h.toLowerCase() === 'stok' || 
+                   h.toLowerCase() === 'stock'
+            ) || 'et_title_variation_stock';
+
+            // Duplicate original data for the update preview
+            const updatedRows: DataRow[] = JSON.parse(JSON.stringify(originalData));
+            let rowsUpdatedCount = 0;
+
+            updatedRows.forEach((row) => {
+              const parentVal = formatSkuValue(row[parentSkuCol]);
+              const variationVal = formatSkuValue(row[variationSkuCol]);
+
+              let matchedQty: number | null = null;
+              let matchCodeUsed = '';
+
+              // 1. Check exact variation SKU in map
+              if (variationVal && stockMap.has(variationVal)) {
+                matchedQty = stockMap.get(variationVal)!;
+                matchCodeUsed = variationVal;
+              } 
+              // 2. Check exact parent SKU in map
+              else if (parentVal && stockMap.has(parentVal)) {
+                matchedQty = stockMap.get(parentVal)!;
+                matchCodeUsed = parentVal;
+              } 
+              // 3. Extract 5-digit codes from variation SKU and match
+              else if (variationVal) {
+                const digits = variationVal.match(/\d{5}/g) || [];
+                for (const digit of digits) {
+                  if (stockMap.has(digit)) {
+                    matchedQty = stockMap.get(digit)!;
+                    matchCodeUsed = digit;
+                    break;
+                  }
+                }
+              }
+              // 4. Extract 5-digit codes from parent SKU and match
+              if (matchedQty === null && parentVal) {
+                const digits = parentVal.match(/\d{5}/g) || [];
+                for (const digit of digits) {
+                  if (stockMap.has(digit)) {
+                    matchedQty = stockMap.get(digit)!;
+                    matchCodeUsed = digit;
+                    break;
+                  }
+                }
+              }
+              // 5. Check substring match (if any key in stockMap is a substring of variation SKU)
+              if (matchedQty === null && variationVal) {
+                for (const [key, qty] of stockMap.entries()) {
+                  if (variationVal.includes(key)) {
+                    matchedQty = qty;
+                    matchCodeUsed = key;
+                    break;
+                  }
+                }
+              }
+              // 6. Check substring match on parent SKU
+              if (matchedQty === null && parentVal) {
+                for (const [key, qty] of stockMap.entries()) {
+                  if (parentVal.includes(key)) {
+                    matchedQty = qty;
+                    matchCodeUsed = key;
+                    break;
+                  }
+                }
+              }
+
+              // Apply the new quantity if matched
+              if (matchedQty !== null) {
+                const currentStockStr = String(row[stockCol] || '').trim();
+                const newStockStr = String(matchedQty);
+
+                if (currentStockStr !== newStockStr) {
+                  row[stockCol] = newStockStr;
+                  row._isUpdated = true;
+                  rowsUpdatedCount++;
+                }
+              }
+            });
+
+            // Populate excel data state with the stock list to satisfy rendering and dashboard counters
+            const mockExcelData = results.data.map((row: any) => {
+              const newRow: DataRow = {};
+              Object.keys(row).forEach((k) => {
+                newRow[k] = row[k];
+              });
+              return newRow;
+            });
+
+            setExcelData(mockExcelData);
+            setExcelHeaders(Object.keys(results.data[0] || {}));
+            setUpdatedData(updatedRows);
+            setUpdatedHeaders(originalHeaders);
+            
+            setMergeStats({
+              primaryKey: variationSkuCol,
+              matchingCols: [stockCol],
+              rowsUpdated: rowsUpdatedCount,
+              rowsAdded: 0,
+            });
+
+            setIsSyncingStock(false);
+            setActiveTab('updated');
+
+            showAlert(
+              `Sinkronisasi Stok Pintar Selesai!\n\nBerhasil membaca ${results.data.length} item dari STOCK LIST.\nJumlah Baris Ter-update: ${rowsUpdatedCount} Produk.\n\nHarap periksa lembar pratinjau "Data Diperbarui". Klik tombol "Update Data ke Sheets" untuk menyimpan perubahan ke Google Sheets Toko Anda secara permanen.`,
+              'success',
+              'Penyelarasan Sukses'
+            );
+          } catch (err: any) {
+            console.error(err);
+            setIsSyncingStock(false);
+            showAlert(err.message || 'Gagal memproses data STOCK LIST.', 'error', 'Gagal Memproses Data');
+          }
+        },
+        error: (err) => {
+          setIsSyncingStock(false);
+          showAlert(`Gagal mengurai CSV STOCK LIST: ${err.message}`, 'error', 'Error Parsing CSV');
+        }
+      });
+    } catch (err: any) {
+      console.error(err);
+      setIsSyncingStock(false);
+      showAlert(err.message || 'Gagal menghubungkan ke spreadsheet STOCK LIST.', 'error', 'Koneksi Gagal');
+    }
   };
 
   // Perform permanent synchronization to Google Sheets using Apps Script Web App Endpoint
@@ -1565,6 +1786,7 @@ export default function App() {
           <SettingsPanel
             csvUrl={csvUrl}
             appsScriptUrl={appsScriptUrl}
+            stockUrl={stockUrl}
             onSave={handleSaveSettings}
             onReset={handleResetSettings}
           />
@@ -1593,6 +1815,9 @@ export default function App() {
                 isUpdatingSheet={isUpdatingSheet}
                 updateProgress={updateProgress}
                 updateStatusText={updateStatusText}
+                onSmartStockSync={handleSmartStockSync}
+                isSyncingStock={isSyncingStock}
+                stockUrl={stockUrl}
               />
               <SyncHistoryPanel
                 logs={syncLogs}
