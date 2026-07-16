@@ -5,30 +5,34 @@ import { motion, AnimatePresence } from 'motion/react';
 interface SettingsPanelProps {
   csvUrl: string;
   appsScriptUrl: string;
-  onSave: (csvUrl: string, appsScriptUrl: string) => void;
+  stockUrl: string;
+  onSave: (csvUrl: string, appsScriptUrl: string, stockUrl: string) => void;
   onReset: () => void;
 }
 
 export default function SettingsPanel({
   csvUrl: initialCsvUrl,
   appsScriptUrl: initialAppsScriptUrl,
+  stockUrl: initialStockUrl,
   onSave,
   onReset,
 }: SettingsPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [csvUrl, setCsvUrl] = useState(initialCsvUrl);
   const [appsScriptUrl, setAppsScriptUrl] = useState(initialAppsScriptUrl);
+  const [stockUrl, setStockUrl] = useState(initialStockUrl);
   const [isSavedMessage, setIsSavedMessage] = useState(false);
 
   // Sync state if props change (e.g. on Reset)
   React.useEffect(() => {
     setCsvUrl(initialCsvUrl);
     setAppsScriptUrl(initialAppsScriptUrl);
-  }, [initialCsvUrl, initialAppsScriptUrl]);
+    setStockUrl(initialStockUrl);
+  }, [initialCsvUrl, initialAppsScriptUrl, initialStockUrl]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(csvUrl.trim(), appsScriptUrl.trim());
+    onSave(csvUrl.trim(), appsScriptUrl.trim(), stockUrl.trim());
     setIsSavedMessage(true);
     setTimeout(() => {
       setIsSavedMessage(false);
@@ -93,6 +97,27 @@ export default function SettingsPanel({
                   value={csvUrl}
                   onChange={(e) => setCsvUrl(e.target.value)}
                   placeholder="https://docs.google.com/spreadsheets/d/.../pub?output=csv"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-shopee/20 focus:border-shopee text-xs transition-all"
+                  required
+                />
+              </div>
+
+              {/* STOCK LIST Google Sheets URL */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+                  URL Google Sheets STOCK LIST
+                  <span className="group relative cursor-pointer">
+                    <HelpCircle className="w-3.5 h-3.5 text-slate-400 hover:text-slate-600" />
+                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 w-60 hidden group-hover:block bg-slate-800 text-white text-[10px] p-2 rounded shadow-lg z-30 leading-normal font-normal">
+                      Tautan Google Sheets asli atau link ekspor CSV untuk data stok Gudang (sheet STOCK LIST).
+                    </span>
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  value={stockUrl}
+                  onChange={(e) => setStockUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=1564332470"
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-shopee/20 focus:border-shopee text-xs transition-all"
                   required
                 />
