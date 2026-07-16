@@ -78,6 +78,33 @@ export default function DataTable({
   const startIndex = (currentPage - 1) * rowsPerPage;
   const endIndex = Math.min(startIndex + rowsPerPage, filteredData.length);
 
+  // Helper to normalize values for comparison matching
+  const getNormalizedKey = (val: any): string => {
+    if (val === undefined || val === null) return '';
+    let valStr = String(val).trim();
+    if (valStr.endsWith('.0')) valStr = valStr.slice(0, -2);
+    if (/^\d+$/.test(valStr)) {
+      return parseInt(valStr, 10).toString();
+    }
+    return valStr;
+  };
+
+  // Pre-computed lookup map for extremely fast O(1) matching of original rows
+  const originalDataMap = useMemo(() => {
+    const map = new Map<string, DataRow>();
+    const pkField = mergeStats?.primaryKey;
+    if (!pkField || originalData.length === 0) return map;
+
+    originalData.forEach((row) => {
+      const val = row[pkField];
+      const normKey = getNormalizedKey(val);
+      if (normKey) {
+        map.set(normKey, row);
+      }
+    });
+    return map;
+  }, [originalData, mergeStats]);
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[75vh] min-h-[550px] overflow-hidden">
       {/* 1. Header Toolbar */}
@@ -102,43 +129,8 @@ export default function DataTable({
 
         {excelData.length > 0 && (
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 font-sans">
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80 shadow-inner">
-              <button
-                type="button"
-                onClick={() => setSyncMethod('sheets_api')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 focus:outline-none ${
-                  syncMethod === 'sheets_api'
-                    ? 'bg-shopee text-white shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-                title="Sinkronisasi langsung menggunakan Google Sheets API resmi secara cepat dan aman tanpa setup Apps Script."
-              >
-                ⚡ Google Sheets API
-              </button>
-              <button
-                type="button"
-                onClick={() => setSyncMethod('firebase')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 focus:outline-none ${
-                  syncMethod === 'firebase'
-                    ? 'bg-white text-shopee shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-                title="Menyimpan ke Firebase lalu memicu Google Sheets menarik data secara akurat & aman dari resiko timeout browser."
-              >
-                🔥 Firebase Sync
-              </button>
-              <button
-                type="button"
-                onClick={() => setSyncMethod('direct')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 focus:outline-none ${
-                  syncMethod === 'direct'
-                    ? 'bg-white text-slate-700 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-                title="Mengirim payload JSON secara langsung ke Apps Script. Dapat mengalami timeout pada file besar."
-              >
-                Direct POST
-              </button>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200/50 text-xs font-bold">
+              <span>⚡ Google Sheets API</span>
             </div>
 
             <button
@@ -302,20 +294,69 @@ export default function DataTable({
                       const cellVal = row[header] !== undefined && row[header] !== null ? row[header] : '';
                       const isPrimaryKey = mergeStats && header === mergeStats.primaryKey;
                       
-                      let cellClass = 'px-4 py-2 border-r border-slate-200 text-slate-700 font-medium';
+                      let cellClass = 'px-4 py-2 border-r border-slate-200 text-slate-700 font-medium transition-all';
+                      let isCellChanged = false;
+                      let originalCellValue = '';
+
+                      const pkField = mergeStats?.primaryKey;
+
+                      if (activeTab === 'updated' && row._isUpdated && pkField && header !== pkField) {
+                        const rowKeyVal = row[pkField];
+                        const normKey = getNormalizedKey(rowKeyVal);
+                        const originalRow = originalDataMap.get(normKey);
+
+                        if (originalRow) {
+                          let origValStr = String(originalRow[header] || '').trim();
+                          let newValStr = String(row[header] || '').trim();
+
+                          if (origValStr.endsWith('.0')) origValStr = origValStr.slice(0, -2);
+                          if (newValStr.endsWith('.0')) newValStr = newValStr.slice(0, -2);
+
+                          if (origValStr !== newValStr) {
+                            isCellChanged = true;
+                            originalCellValue = originalRow[header] !== undefined && originalRow[header] !== null ? String(originalRow[header]) : '';
+                            cellClass = 'px-4 py-2.5 border-r border-slate-200 bg-emerald-100/50 hover:bg-emerald-100 text-slate-900 font-medium transition-all';
+                          }
+                        }
+                      }
+
                       if (isPrimaryKey) {
                         cellClass += ' font-bold text-shopee bg-shopee-light/30';
                       }
 
                       return (
                         <td key={header} className={cellClass}>
-                          {row._isUpdated && header !== mergeStats?.primaryKey && (
-                            <span className="mr-1 inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" title="Diubah" />
+                          {isCellChanged ? (
+                            <div className="flex flex-col py-0.5">
+                              <span className="text-emerald-950 font-bold flex items-center gap-1.5">
+                                {String(cellVal) || <em className="text-slate-400 font-normal">(kosong)</em>}
+                                <span className="inline-flex items-center px-1.5 py-0.5 bg-emerald-600 text-[8px] text-white rounded font-bold uppercase tracking-wider">
+                                  Ubah
+                                </span>
+                              </span>
+                              <span className="text-[10px] text-slate-500 font-normal mt-0.5">
+                                Semula: <span className="line-through decoration-slate-300 font-mono bg-white px-1.5 py-0.5 border border-slate-200/55 rounded">{originalCellValue || '(kosong)'}</span>
+                              </span>
+                            </div>
+                          ) : row._isNew ? (
+                            <div className="flex flex-col py-0.5">
+                              <span className="text-blue-950 font-semibold flex items-center gap-1.5">
+                                {String(cellVal) || <em className="text-slate-400 font-normal">(kosong)</em>}
+                                {header === pkField && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 bg-blue-600 text-[8px] text-white rounded font-bold uppercase tracking-wider">
+                                    Baru
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                          ) : (
+                            <>
+                              {activeTab === 'updated' && row._isUpdated && header === pkField && (
+                                <span className="mr-1.5 inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Baris memiliki pembaruan" />
+                              )}
+                              {String(cellVal)}
+                            </>
                           )}
-                          {row._isNew && (
-                            <span className="mr-1 inline-block w-1.5 h-1.5 rounded-full bg-blue-500" title="Baris Baru" />
-                          )}
-                          {String(cellVal)}
                         </td>
                       );
                     })}
