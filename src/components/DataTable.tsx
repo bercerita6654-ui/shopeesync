@@ -14,8 +14,8 @@ interface DataTableProps {
   mergeStats: MergeStats | null;
   onUpdateToSheets: () => void;
   isUpdatingSheet: boolean;
-  syncMethod: 'firebase' | 'direct';
-  setSyncMethod: (method: 'firebase' | 'direct') => void;
+  syncMethod: 'firebase' | 'direct' | 'sheets_api';
+  setSyncMethod: (method: 'firebase' | 'direct' | 'sheets_api') => void;
 }
 
 export default function DataTable({
@@ -101,8 +101,20 @@ export default function DataTable({
         </div>
 
         {excelData.length > 0 && (
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 font-sans">
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80 shadow-inner">
+              <button
+                type="button"
+                onClick={() => setSyncMethod('sheets_api')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 focus:outline-none ${
+                  syncMethod === 'sheets_api'
+                    ? 'bg-shopee text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title="Sinkronisasi langsung menggunakan Google Sheets API resmi secara cepat dan aman tanpa setup Apps Script."
+              >
+                ⚡ Google Sheets API
+              </button>
               <button
                 type="button"
                 onClick={() => setSyncMethod('firebase')}

@@ -60,7 +60,63 @@ export default function App() {
   });
 
   // Sync Method State
-  const [syncMethod, setSyncMethod] = useState<'firebase' | 'direct'>('firebase');
+  const [syncMethod, setSyncMethod] = useState<'firebase' | 'direct' | 'sheets_api'>('firebase');
+
+  // Google OAuth Access Token (cached in-memory)
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+
+  const extractSpreadsheetId = (url: string): string | null => {
+    const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    return match ? match[1] : null;
+  };
+
+  const extractGid = (url: string): string | null => {
+    const match = url.match(/[?&]gid=([0-9]+)/);
+    return match ? match[1] : null;
+  };
+
+  const fetchSheetNameByGid = async (spreadsheetId: string, gid: string | null, accessToken: string): Promise<string> => {
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) {
+      throw new Error(`Gagal mengambil metadata spreadsheet: ${res.statusText}`);
+    }
+    const data = await res.json();
+    const sheets = data.sheets || [];
+    
+    if (gid) {
+      const targetGid = parseInt(gid, 10);
+      const found = sheets.find((s: any) => s.properties.sheetId === targetGid);
+      if (found) {
+        return found.properties.title;
+      }
+    }
+    if (sheets.length > 0) {
+      return sheets[0].properties.title;
+    }
+    return 'Sheet1';
+  };
+
+  const getOrRequestAccessToken = async (): Promise<string | null> => {
+    if (googleAccessToken) return googleAccessToken;
+    
+    const provider = new GoogleAuthProvider();
+    provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+    try {
+      setUpdateStatusText('Menghubungkan akun Google Anda...');
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        setGoogleAccessToken(credential.accessToken);
+        return credential.accessToken;
+      }
+    } catch (err: any) {
+      console.error('Failed to get Google Access Token:', err);
+      throw new Error('Gagal menghubungkan Google: Harap izinkan popup dan berikan akses ke Google Sheets Anda.');
+    }
+    return null;
+  };
 
   // Data States
   const [originalData, setOriginalData] = useState<DataRow[]>([]);
@@ -299,9 +355,17 @@ export default function App() {
     setAuthError('');
     setIsSubmittingAuth(true);
     const provider = new GoogleAuthProvider();
+    provider.addScope('https://www.googleapis.com/auth/spreadsheets');
     try {
-      await signInWithPopup(auth, provider);
-      showAlert('Berhasil masuk menggunakan akun Google!', 'success', 'Login Google Sukses');
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        setGoogleAccessToken(credential.accessToken);
+        setSyncMethod('sheets_api');
+        showAlert('Berhasil masuk menggunakan akun Google & mengaktifkan mode Sinkronisasi API langsung!', 'success', 'Login Google Sukses');
+      } else {
+        showAlert('Berhasil masuk menggunakan akun Google, tetapi gagal mendapatkan izin menulis ke Google Sheets. Silakan coba masuk lagi jika Anda ingin melakukan sinkronisasi langsung.', 'warning', 'Login Google Terbatas');
+      }
     } catch (err: any) {
       console.error('Google auth error:', err);
       let errMsg = 'Gagal masuk dengan akun Google.';
@@ -328,6 +392,7 @@ export default function App() {
   const handleSignOut = async () => {
     try {
       await signOut(auth);
+      setGoogleAccessToken(null);
       // Reset states
       setOriginalData([]);
       setExcelData([]);
@@ -639,7 +704,7 @@ export default function App() {
   const handleUpdateToSheets = async () => {
     if (excelData.length === 0) return;
 
-    if (appsScriptUrl === DEFAULT_APPS_SCRIPT_URL && appsScriptUrl.includes('MASUKKAN_URL_WEB_APP')) {
+    if (syncMethod !== 'sheets_api' && appsScriptUrl === DEFAULT_APPS_SCRIPT_URL && appsScriptUrl.includes('MASUKKAN_URL_WEB_APP')) {
       showAlert('URL Google Apps Script Anda belum dikonfigurasi. Harap sesuaikan di panel pengaturan.', 'error', 'URL Belum Ditentukan');
       return;
     }
@@ -647,7 +712,133 @@ export default function App() {
     setIsUpdatingSheet(true);
     setUpdateProgress(0);
 
-    if (syncMethod === 'firebase') {
+    if (syncMethod === 'sheets_api') {
+      try {
+        setUpdateStatusText('Menghubungkan ke Google...');
+        setUpdateProgress(10);
+        
+        const token = await getOrRequestAccessToken();
+        if (!token) {
+          throw new Error('Gagal mendapatkan Token Akses Google. Pastikan Anda telah mengizinkan popup.');
+        }
+
+        setUpdateStatusText('Menganalisis URL spreadsheet...');
+        setUpdateProgress(25);
+        const spreadsheetId = extractSpreadsheetId(csvUrl);
+        const gid = extractGid(csvUrl);
+
+        if (!spreadsheetId) {
+          throw new Error('Format URL Google Sheets tidak valid. Silakan periksa kolom URL di Pengaturan.');
+        }
+
+        setUpdateStatusText('Mengambil nama sheet/tab...');
+        setUpdateProgress(40);
+        const sheetName = await fetchSheetNameByGid(spreadsheetId, gid, token);
+
+        setUpdateStatusText(`Mengosongkan data lama di tab "${sheetName}"...`);
+        setUpdateProgress(60);
+        
+        // Clear range to prevent leftover rows
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1:ZZZ:clear`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        setUpdateStatusText(`Menulis data baru ke tab "${sheetName}"...`);
+        setUpdateProgress(80);
+
+        // Map updatedData to 2D values array matching originalHeaders
+        const headers = originalHeaders.length > 0 ? originalHeaders : updatedHeaders;
+        if (headers.length === 0) {
+          throw new Error('Tidak ada kolom header yang terdeteksi untuk ditulis.');
+        }
+
+        const rows2D = [
+          headers,
+          ...updatedData.map((row) => headers.map((h) => {
+            const val = row[h];
+            return val !== undefined && val !== null ? val : '';
+          }))
+        ];
+
+        const writeRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1?valueInputOption=USER_ENTERED`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            range: `${sheetName}!A1`,
+            majorDimension: 'ROWS',
+            values: rows2D,
+          }),
+        });
+
+        if (!writeRes.ok) {
+          const errData = await writeRes.json().catch(() => ({}));
+          throw new Error(errData.error?.message || `Gagal menulis ke Google Sheets: ${writeRes.statusText}`);
+        }
+
+        setUpdateProgress(100);
+        setUpdateStatusText('Google Sheets API Sync Berhasil!');
+
+        const now = new Date();
+        const options: Intl.DateTimeFormatOptions = {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        };
+        const formattedTime = now.toLocaleDateString('id-ID', options).replace(/\./g, ':');
+
+        localStorage.setItem('lastExcelUpdateToSheet', formattedTime);
+        setLastUpdateTime(formattedTime);
+
+        // Update Firebase settings global with last updated time
+        await setDoc(doc(db, 'settings', 'global'), { lastUpdateTime: formattedTime }, { merge: true }).catch(() => {});
+
+        addSyncLog({
+          rowsUpdated: mergeStats?.rowsUpdated || 0,
+          rowsAdded: mergeStats?.rowsAdded || 0,
+          fileName: uploadedFileName || 'Excel Upload',
+          status: 'success'
+        });
+
+        setTimeout(() => {
+          setIsUpdatingSheet(false);
+          showAlert(
+            `Sinkronisasi Google Sheets API berhasil! ${mergeStats?.rowsUpdated || 0} baris diperbarui, ${mergeStats?.rowsAdded || 0} baris ditambahkan ke sheet "${sheetName}".`,
+            'success',
+            'Sync API Sukses'
+          );
+          fetchSheetData();
+        }, 600);
+
+      } catch (err: any) {
+        setIsUpdatingSheet(false);
+        console.error('Error in Sheets API sync:', err);
+        
+        addSyncLog({
+          rowsUpdated: 0,
+          rowsAdded: 0,
+          fileName: uploadedFileName || 'Excel Upload',
+          status: 'failed',
+          errorMsg: err.message || 'Sheets API sync failed'
+        });
+
+        showAlert(
+          `Gagal Sinkronisasi via API Google Sheets:\n${err.message || 'Silakan coba lagi.'}`,
+          'error',
+          'Sheets API Sync Gagal'
+        );
+      }
+    } else if (syncMethod === 'firebase') {
       setUpdateStatusText('Menyiapkan koneksi Firebase...');
       try {
         const total = updatedData.length;
